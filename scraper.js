@@ -12,9 +12,8 @@ async function fetchTopTraders() {
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox', 
-                '--disable-dev-shm-usage', // Critical for AWS/Docker
+                '--disable-dev-shm-usage',
                 '--disable-gpu',
-                '--disable-software-rasterizer',
                 '--disable-blink-features=AutomationControlled'
             ] 
         });
@@ -25,79 +24,75 @@ async function fetchTopTraders() {
     }
 
     try {
-        console.log('Creating browser context...');
         const context = await browser.newContext({
             userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-            viewport: { width: 1280, height: 720 }, // Smaller viewport uses less RAM
-            deviceScaleFactor: 1,
+            viewport: { width: 1440, height: 900 },
         });
         
-        console.log('Opening new page...');
         const page = await context.newPage();
-
-        // Reduce timeouts for AWS so we don't wait forever
-        page.setDefaultTimeout(60000);
-
         console.log('Navigating to GMGN.AI...');
+        
         await page.goto('https://gmgn.ai/trade?chain=sol&tab=renowned', {
-            waitUntil: 'domcontentloaded', // Faster than 'load'
+            waitUntil: 'networkidle',
             timeout: 60000
         });
 
-        console.log('Checking for Cloudflare...');
-        const content = await page.content();
-        if (content.includes('Verify you are human') || content.includes('Cloudflare')) {
-            console.log('Bot detected by Cloudflare! Saving debug screenshot...');
-            await page.screenshot({ path: 'debug_error.png' });
-            return { error: 'Blocked by Cloudflare bot protection.' };
-        }
+        console.log('Waiting for table to render...');
+        await page.waitForSelector('table tbody tr', { timeout: 45000 });
 
-        console.log('Waiting for data table to appear...');
-        // Wait for either the table or a known data element
-        await page.waitForSelector('table', { timeout: 30000 });
-        
-        console.log('Fetching data via API evaluate...');
-        const apiUrl = "https://gmgn.ai/defi/quotation/v1/rank/sol/wallets/1d?tag=renowned&orderby=pnl_1d&direction=desc";
+        // Human-like scroll to trigger lazy loading if needed
+        await page.mouse.wheel(0, 500);
+        await new Promise(r => setTimeout(r, 2000));
 
-        const data = await page.evaluate(async (url) => {
-            try {
-                const response = await fetch(url, {
-                    headers: {
-                        'accept': 'application/json, text/plain, */*',
-                        'accept-language': 'en-US,en;q=0.9',
-                    }
-                });
+        console.log('Scraping table data directly from DOM...');
+        const traders = await page.evaluate(() => {
+            const rows = Array.from(document.querySelectorAll('table tbody tr'));
+            return rows.map((row, index) => {
+                const cells = row.querySelectorAll('td');
+                if (cells.length < 5) return null;
+
+                // Extracting name and address from the first few cells
+                // Note: The exact selectors might need adjustment based on GMGN's class names
+                const nameElement = row.querySelector('a[href*="/address/"]');
+                const address = nameElement ? nameElement.getAttribute('href').split('/').pop() : 'Unknown';
+                const name = nameElement ? nameElement.innerText.trim() : 'Unknown';
+                
+                // Get PNL and Winrate (usually in specific columns)
+                // This is a simplified extraction; GMGN table structure is complex
+                const pnlText = cells[3] ? cells[3].innerText.trim() : '0';
+                const winrateText = cells[5] ? cells[5].innerText.trim() : '0';
+
+                return {
+                    rank: index + 1,
+                    name: name,
+                    address: address,
+                    pnl_1d_percent: pnlText,
+                    winrate_1d: winrateText,
+                    // Fill other fields with placeholders or extracted data
+                    sol_balance: cells[2] ? cells[2].innerText.trim() : '0',
+                };
+            }).filter(t => t !== null);
+        });
+
+        // If DOM scraping fails or returns little data, try the API method one last time with correct headers
+        if (traders.length === 0) {
+            console.log('DOM scraping returned 0 rows. Attempting API fallback...');
+            const apiUrl = "https://gmgn.ai/defi/quotation/v1/rank/sol/wallets/1d?tag=renowned&orderby=pnl_1d&direction=desc";
+            const apiData = await page.evaluate(async (url) => {
+                const response = await fetch(url);
                 return await response.json();
-            } catch (e) {
-                return { error: e.message };
-            }
-        }, apiUrl);
-
-        if (!data || data.error || (data.data && data.data.rank && data.data.rank.length === 0)) {
-            console.log('API returned no data. Possible detection or empty result.');
-            await page.screenshot({ path: 'no_data_debug.png' });
-        } else {
-            console.log(`Success! Found ${data.data?.rank?.length || 0} traders.`);
+            }, apiUrl);
+            return apiData;
         }
 
-        return data;
+        console.log(`Success! Scraped ${traders.length} traders from the table.`);
+        return { data: { rank: traders } };
+
     } catch (error) {
-        console.error('Error during scraping process:', error.message);
-        try {
-            const pages = await browser.pages();
-            if (pages.length > 0) {
-                await pages[0].screenshot({ path: 'error_screenshot.png' });
-                console.log('Error screenshot saved as error_screenshot.png');
-            }
-        } catch (e) {
-            console.error('Could not take error screenshot:', e.message);
-        }
+        console.error('Error during scraping:', error.message);
         return { error: error.message };
     } finally {
-        if (browser) {
-            console.log('Closing browser...');
-            await browser.close();
-        }
+        if (browser) await browser.close();
     }
 }
 
