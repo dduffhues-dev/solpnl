@@ -77,8 +77,9 @@ app.get('/', (req, res) => {
     res.json({ message: 'Welcome to GMGN Top Traders API. Use /top-traders to get data.' });
 });
 
-app.listen(port, () => {
-    console.log(`Server running at http://localhost:${port}`);
+app.listen(port, '0.0.0.0', () => {
+    console.log(`Server running at http://0.0.0.0:${port}`);
+    console.log(`Note: On AWS, use your Public IP and ensure port ${port} is open in Security Groups.`);
 });
 
 

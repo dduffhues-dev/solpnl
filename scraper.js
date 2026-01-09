@@ -1,21 +1,25 @@
 const { chromium } = require('playwright-chromium');
 
 async function fetchTopTraders() {
-    const browser = await chromium.launch({ headless: true });
+    console.log('Launching browser...');
+    const browser = await chromium.launch({ 
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox'] 
+    });
     try {
         const context = await browser.newContext({
             userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36'
         });
         const page = await context.newPage();
 
-        console.log('Navigating to GMGN.AI...');
+        console.log('Navigating to GMGN.AI (this can take 10-20 seconds on AWS)...');
         await page.goto('https://gmgn.ai/trade?chain=sol&tab=renowned', {
-            waitUntil: 'domcontentloaded',
-            timeout: 60000
+            waitUntil: 'networkidle', // Wait for network to be quiet
+            timeout: 90000
         });
 
-        console.log('Waiting for page load...');
-        await page.waitForSelector('table', { timeout: 30000 });
+        console.log('Page reached. Waiting for data table...');
+        await page.waitForSelector('table', { timeout: 45000 });
         
         // Wait a bit for session establishment
         await new Promise(resolve => setTimeout(resolve, 2000));
