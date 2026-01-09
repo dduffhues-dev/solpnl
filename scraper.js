@@ -69,7 +69,7 @@ async function fetchTopTraders() {
         }, apiUrl);
 
         if (!data || data.error) {
-            console.log('API fetch failed, attempting to scrape table directly as backup...');
+            console.log('API fetch failed.');
         }
 
         return data;
