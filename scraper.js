@@ -12,7 +12,9 @@ async function fetchTopTraders() {
             args: [
                 '--no-sandbox', 
                 '--disable-setuid-sandbox', 
-                '--disable-dev-shm-usage',
+                '--disable-dev-shm-usage', // Critical for AWS/Docker
+                '--disable-gpu',
+                '--disable-software-rasterizer',
                 '--disable-blink-features=AutomationControlled'
             ] 
         });
@@ -23,24 +25,26 @@ async function fetchTopTraders() {
     }
 
     try {
+        console.log('Creating browser context...');
         const context = await browser.newContext({
             userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
-            viewport: { width: 1920, height: 1080 },
+            viewport: { width: 1280, height: 720 }, // Smaller viewport uses less RAM
             deviceScaleFactor: 1,
         });
         
+        console.log('Opening new page...');
         const page = await context.newPage();
+
+        // Reduce timeouts for AWS so we don't wait forever
+        page.setDefaultTimeout(60000);
 
         console.log('Navigating to GMGN.AI...');
         await page.goto('https://gmgn.ai/trade?chain=sol&tab=renowned', {
-            waitUntil: 'load', 
-            timeout: 90000
+            waitUntil: 'domcontentloaded', // Faster than 'load'
+            timeout: 60000
         });
 
-        // Small human-like delay
-        await new Promise(r => setTimeout(r, 5000));
-
-        // Check for Cloudflare/Bot detection
+        console.log('Checking for Cloudflare...');
         const content = await page.content();
         if (content.includes('Verify you are human') || content.includes('Cloudflare')) {
             console.log('Bot detected by Cloudflare! Saving debug screenshot...');
@@ -48,10 +52,11 @@ async function fetchTopTraders() {
             return { error: 'Blocked by Cloudflare bot protection.' };
         }
 
-        console.log('Page loaded. Waiting for table...');
-        await page.waitForSelector('table', { timeout: 45000 });
+        console.log('Waiting for data table to appear...');
+        // Wait for either the table or a known data element
+        await page.waitForSelector('table', { timeout: 30000 });
         
-        console.log('Fetching data via session-authenticated evaluate...');
+        console.log('Fetching data via API evaluate...');
         const apiUrl = "https://gmgn.ai/defi/quotation/v1/rank/sol/wallets/1d?tag=renowned&orderby=pnl_1d&direction=desc";
 
         const data = await page.evaluate(async (url) => {
@@ -68,20 +73,31 @@ async function fetchTopTraders() {
             }
         }, apiUrl);
 
-        if (!data || data.error) {
-            console.log('API fetch failed.');
+        if (!data || data.error || (data.data && data.data.rank && data.data.rank.length === 0)) {
+            console.log('API returned no data. Possible detection or empty result.');
+            await page.screenshot({ path: 'no_data_debug.png' });
+        } else {
+            console.log(`Success! Found ${data.data?.rank?.length || 0} traders.`);
         }
 
         return data;
     } catch (error) {
-        console.error('Error during scraping:', error);
+        console.error('Error during scraping process:', error.message);
         try {
-            const page = (await browser.pages())[0];
-            if (page) await page.screenshot({ path: 'error_screenshot.png' });
-        } catch (e) {}
+            const pages = await browser.pages();
+            if (pages.length > 0) {
+                await pages[0].screenshot({ path: 'error_screenshot.png' });
+                console.log('Error screenshot saved as error_screenshot.png');
+            }
+        } catch (e) {
+            console.error('Could not take error screenshot:', e.message);
+        }
         return { error: error.message };
     } finally {
-        if (browser) await browser.close();
+        if (browser) {
+            console.log('Closing browser...');
+            await browser.close();
+        }
     }
 }
 
