@@ -32,7 +32,6 @@ async function fetchTopTraders() {
         const page = await context.newPage();
 
         console.log('Navigating to GMGN.AI...');
-        // Increased timeout and changed waitUntil for better stability
         await page.goto('https://gmgn.ai/trade?chain=sol&tab=renowned', {
             waitUntil: 'load', 
             timeout: 90000
@@ -53,7 +52,6 @@ async function fetchTopTraders() {
         await page.waitForSelector('table', { timeout: 45000 });
         
         console.log('Fetching data via session-authenticated evaluate...');
-        // Use a cleaner API URL - removing some of the hardcoded tracking IDs that might trigger flags
         const apiUrl = "https://gmgn.ai/defi/quotation/v1/rank/sol/wallets/1d?tag=renowned&orderby=pnl_1d&direction=desc";
 
         const data = await page.evaluate(async (url) => {
@@ -72,31 +70,19 @@ async function fetchTopTraders() {
 
         if (!data || data.error) {
             console.log('API fetch failed, attempting to scrape table directly as backup...');
-            // Add backup scraping logic here if needed
         }
 
         return data;
     } catch (error) {
         console.error('Error during scraping:', error);
-        // Take a screenshot of the failure
         try {
             const page = (await browser.pages())[0];
             if (page) await page.screenshot({ path: 'error_screenshot.png' });
         } catch (e) {}
         return { error: error.message };
     } finally {
-        await browser.close();
-    }
-}
-    } catch (error) {
-        console.error('Error during scraping:', error);
-        return { error: error.message };
-    } finally {
-        await browser.close();
+        if (browser) await browser.close();
     }
 }
 
 module.exports = { fetchTopTraders };
-
-
-
